@@ -1,0 +1,596 @@
+// Zuntie Label Platform - Database Schema
+// Supabase PostgreSQL • NestJS • Multi-tenant ready
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ==========================================
+// ENUMS
+// ==========================================
+
+enum StaffRole {
+  ADMIN
+  SALES
+}
+
+enum CustomerUserRole {
+  OWNER
+  MEMBER
+}
+
+enum UserType {
+  STAFF
+  CUSTOMER
+}
+
+enum CustomerUserStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  CONVERTED
+  LOST
+}
+
+enum ProjectStatus {
+  DRAFT
+  REQUIREMENT_RECEIVED
+  DESIGNING
+  WAITING_CUSTOMER_REVIEW
+  REVISION_REQUESTED
+  APPROVED
+  QUOTED
+  COMPLETED
+  CANCELLED
+}
+
+enum DesignStatus {
+  DRAFT
+  IN_REVIEW
+  REVISION_REQUESTED
+  APPROVED
+  ARCHIVED
+}
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+enum UnitType {
+  MM
+  CM
+  INCH
+}
+
+enum FileType {
+  LOGO
+  BRIEF
+  REFERENCE
+  SPEC
+  PROOF
+  OTHER
+}
+
+enum CommentStatus {
+  OPEN
+  RESOLVED
+}
+
+enum ConversationType {
+  PROJECT_CHAT
+}
+
+enum AIRunType {
+  BRIEF_ANALYSIS
+  SALES_SUMMARY
+  MATERIAL_RECOMMENDATION
+  DESIGN_PREFLIGHT
+}
+
+enum AIRunStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+// ==========================================
+// MODELS
+// ==========================================
+
+/// Multi-tenant root organization
+model Organization {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String
+  slug         String   @unique
+  status       String   @default("ACTIVE")
+  settingsJson Json?    @map("settings_json")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  members      OrganizationMember[]
+  leads        Lead[]
+  customers    Customer[]
+  projects     Project[]
+  designs      Design[]
+  quotations   Quotation[]
+  labelTypes   LabelType[]
+  materials    Material[]
+  activityLogs ActivityLog[]
+  aiRuns       AIRun[]
+  projectFiles ProjectFile[]
+
+  @@map("organizations")
+}
+
+/// User profile linked 1-to-1 with Supabase auth.users(id)
+model Profile {
+  id        String   @id @db.Uuid
+  fullName  String   @map("full_name")
+  email     String   @unique
+  avatarUrl String?  @map("avatar_url")
+  phone     String?
+  userType  UserType @default(STAFF) @map("user_type")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  organizationMembers OrganizationMember[]
+  customerUsers       CustomerUser[]
+  assignedLeads       Lead[]               @relation("LeadAssignedUser")
+  ownedProjects       Project[]            @relation("ProjectOwnerUser")
+  createdVersions     DesignVersion[]
+  authoredComments    DesignComment[]      @relation("CommentAuthor")
+  resolvedComments    DesignComment[]      @relation("CommentResolver")
+  sentMessages        Message[]
+  createdQuotations   Quotation[]
+  uploadedFiles       ProjectFile[]
+  leadActivities      LeadActivity[]
+  activityLogs        ActivityLog[]
+  aiRuns              AIRun[]
+
+  @@map("profiles")
+}
+
+/// Staff membership in an organization
+model OrganizationMember {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  role           StaffRole
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  profile      Profile      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("organization_members")
+}
+
+/// Sales Lead collected from Website CTA / Forms
+model Lead {
+  id                  String     @id @default(uuid()) @db.Uuid
+  organizationId      String     @map("organization_id") @db.Uuid
+  assignedUserId      String?    @map("assigned_user_id") @db.Uuid
+  name                String
+  companyName         String?    @map("company_name")
+  email               String?
+  phone               String?
+  message             String?
+  status              LeadStatus @default(NEW)
+  source              String?
+  utmSource           String?    @map("utm_source")
+  utmMedium           String?    @map("utm_medium")
+  utmCampaign         String?    @map("utm_campaign")
+  landingPage         String?    @map("landing_page")
+  referrer            String?
+  convertedCustomerId String?    @map("converted_customer_id") @db.Uuid
+  convertedProjectId  String?    @map("converted_project_id") @db.Uuid
+  createdAt           DateTime   @default(now()) @map("created_at")
+  updatedAt           DateTime   @updatedAt @map("updated_at")
+
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignedUser      Profile?       @relation("LeadAssignedUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  convertedCustomer Customer?      @relation("ConvertedLeadCustomer", fields: [convertedCustomerId], references: [id], onDelete: SetNull)
+  convertedProject  Project?       @relation("ConvertedLeadProject", fields: [convertedProjectId], references: [id], onDelete: SetNull)
+  activities        LeadActivity[]
+
+  @@index([organizationId, status, createdAt])
+  @@index([organizationId, assignedUserId, status])
+  @@map("leads")
+}
+
+/// Audit activity timeline for leads
+model LeadActivity {
+  id          String   @id @default(uuid()) @db.Uuid
+  leadId      String   @map("lead_id") @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  type        String
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  actorUser Profile? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([leadId, createdAt])
+  @@map("lead_activities")
+}
+
+/// Customer business account
+model Customer {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  name           String
+  companyName    String?   @map("company_name")
+  email          String?
+  phone          String?
+  notes          String?
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contacts       CustomerContact[]
+  portalUsers    CustomerUser[]
+  projects       Project[]
+  convertedLeads Lead[]            @relation("ConvertedLeadCustomer")
+
+  @@index([organizationId, companyName])
+  @@map("customers")
+}
+
+/// Contact persons within a customer organization
+model CustomerContact {
+  id         String   @id @default(uuid()) @db.Uuid
+  customerId String   @map("customer_id") @db.Uuid
+  name       String
+  title      String?
+  email      String?
+  phone      String?
+  isPrimary  Boolean  @default(false) @map("is_primary")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@map("customer_contacts")
+}
+
+/// Customer portal user access mapping
+model CustomerUser {
+  id         String             @id @default(uuid()) @db.Uuid
+  customerId String             @map("customer_id") @db.Uuid
+  userId     String             @map("user_id") @db.Uuid
+  role       CustomerUserRole   @default(MEMBER)
+  status     CustomerUserStatus @default(ACTIVE)
+  createdAt  DateTime           @default(now()) @map("created_at")
+  updatedAt  DateTime           @updatedAt @map("updated_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  profile  Profile  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, userId])
+  @@index([userId])
+  @@map("customer_users")
+}
+
+/// Label project entity
+model Project {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @map("organization_id") @db.Uuid
+  customerId     String        @map("customer_id") @db.Uuid
+  ownerUserId    String?       @map("owner_user_id") @db.Uuid
+  name           String
+  status         ProjectStatus @default(DRAFT)
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+  deletedAt      DateTime?     @map("deleted_at")
+
+  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer       Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  ownerUser      Profile?            @relation("ProjectOwnerUser", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  requirement    ProjectRequirement?
+  files          ProjectFile[]
+  designs        Design[]
+  conversations  Conversation[]
+  quotations     Quotation[]
+  aiRuns         AIRun[]
+  convertedLeads Lead[]              @relation("ConvertedLeadProject")
+
+  @@index([organizationId, customerId, createdAt])
+  @@index([organizationId, status, updatedAt])
+  @@map("projects")
+}
+
+/// Label specifications and custom parameters
+model ProjectRequirement {
+  id          String    @id @default(uuid()) @db.Uuid
+  projectId   String    @unique @map("project_id") @db.Uuid
+  labelTypeId String?   @map("label_type_id") @db.Uuid
+  materialId  String?   @map("material_id") @db.Uuid
+  width       Decimal?  @db.Decimal(10, 2)
+  height      Decimal?  @db.Decimal(10, 2)
+  unit        UnitType? @default(MM)
+  quantity    Int?
+  shape       String?
+  finishType  String?   @map("finish_type")
+  colors      String?
+  extraData   Json?     @map("extra_data")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  labelType LabelType? @relation(fields: [labelTypeId], references: [id], onDelete: SetNull)
+  material  Material?  @relation(fields: [materialId], references: [id], onDelete: SetNull)
+
+  @@map("project_requirements")
+}
+
+/// File metadata for logo, brief, spec, and attachments
+model ProjectFile {
+  id               String   @id @default(uuid()) @db.Uuid
+  organizationId   String   @map("organization_id") @db.Uuid
+  projectId        String   @map("project_id") @db.Uuid
+  storagePath      String   @map("storage_path")
+  fileName         String   @map("file_name")
+  fileType         FileType @default(OTHER) @map("file_type")
+  mimeType         String   @map("mime_type")
+  sizeBytes        BigInt   @map("size_bytes")
+  uploadedByUserId String?  @map("uploaded_by_user_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploadedByUser Profile?     @relation(fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, fileType])
+  @@map("project_files")
+}
+
+/// Design container for a project
+model Design {
+  id                String       @id @default(uuid()) @db.Uuid
+  organizationId    String       @map("organization_id") @db.Uuid
+  projectId         String       @map("project_id") @db.Uuid
+  title             String
+  status            DesignStatus @default(DRAFT)
+  currentVersionId  String?      @unique @map("current_version_id") @db.Uuid
+  approvedVersionId String?      @unique @map("approved_version_id") @db.Uuid
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  currentVersion  DesignVersion?  @relation("CurrentDesignVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  approvedVersion DesignVersion?  @relation("ApprovedDesignVersion", fields: [approvedVersionId], references: [id], onDelete: SetNull)
+  versions        DesignVersion[] @relation("AllDesignVersions")
+
+  @@index([projectId, status])
+  @@map("designs")
+}
+
+/// Immutable design version snapshot
+model DesignVersion {
+  id              String   @id @default(uuid()) @db.Uuid
+  designId        String   @map("design_id") @db.Uuid
+  versionNumber   Int      @map("version_number")
+  previewPath     String   @map("preview_path")
+  sourcePath      String?  @map("source_path")
+  documentJson    Json?    @map("document_json")
+  changelog       String?
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  design            Design          @relation("AllDesignVersions", fields: [designId], references: [id], onDelete: Cascade)
+  createdByUser     Profile?        @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  asCurrentDesign   Design?         @relation("CurrentDesignVersion")
+  asApprovedDesign  Design?         @relation("ApprovedDesignVersion")
+  comments          DesignComment[]
+
+  @@unique([designId, versionNumber])
+  @@map("design_versions")
+}
+
+/// Pin-point and visual design feedback comments
+model DesignComment {
+  id               String        @id @default(uuid()) @db.Uuid
+  designVersionId  String        @map("design_version_id") @db.Uuid
+  authorUserId     String?       @map("author_user_id") @db.Uuid
+  parentId         String?       @map("parent_id") @db.Uuid
+  body             String
+  anchorJson       Json?         @map("anchor_json")
+  status           CommentStatus @default(OPEN)
+  resolvedByUserId String?       @map("resolved_by_user_id") @db.Uuid
+  resolvedAt       DateTime?     @map("resolved_at")
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+
+  designVersion  DesignVersion   @relation(fields: [designVersionId], references: [id], onDelete: Cascade)
+  authorUser     Profile?        @relation("CommentAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+  parent         DesignComment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies        DesignComment[] @relation("CommentReplies")
+  resolvedByUser Profile?        @relation("CommentResolver", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([designVersionId, status])
+  @@map("design_comments")
+}
+
+/// Project communication thread container
+model Conversation {
+  id        String           @id @default(uuid()) @db.Uuid
+  projectId String           @map("project_id") @db.Uuid
+  type      ConversationType @default(PROJECT_CHAT)
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+
+  project  Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@index([projectId])
+  @@map("conversations")
+}
+
+/// Messages sent within a project conversation
+model Message {
+  id             String   @id @default(uuid()) @db.Uuid
+  conversationId String   @map("conversation_id") @db.Uuid
+  senderUserId   String?  @map("sender_user_id") @db.Uuid
+  body           String
+  attachmentJson Json?    @map("attachment_json")
+  isInternal     Boolean  @default(false) @map("is_internal")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderUser   Profile?     @relation(fields: [senderUserId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+/// Quotation document for a project
+model Quotation {
+  id              String          @id @default(uuid()) @db.Uuid
+  organizationId  String          @map("organization_id") @db.Uuid
+  projectId       String          @map("project_id") @db.Uuid
+  version         Int             @default(1)
+  status          QuotationStatus @default(DRAFT)
+  currency        String          @default("VND")
+  subtotal        Decimal         @db.Decimal(12, 2)
+  discountAmount  Decimal         @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  shippingFee     Decimal         @default(0) @map("shipping_fee") @db.Decimal(12, 2)
+  taxRate         Decimal         @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  taxAmount       Decimal         @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  totalAmount     Decimal         @map("total_amount") @db.Decimal(12, 2)
+  validUntil      DateTime?       @map("valid_until")
+  sentAt          DateTime?       @map("sent_at")
+  acceptedAt      DateTime?       @map("accepted_at")
+  rejectedReason  String?         @map("rejected_reason")
+  createdByUserId String?         @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  organization  Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project       Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdByUser Profile?        @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  items         QuotationItem[]
+
+  @@unique([projectId, version])
+  @@index([organizationId, status])
+  @@map("quotations")
+}
+
+/// Line items in a quotation
+model QuotationItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  quotationId String   @map("quotation_id") @db.Uuid
+  description String
+  quantity    Int
+  unitPrice   Decimal  @map("unit_price") @db.Decimal(12, 2)
+  amount      Decimal  @db.Decimal(12, 2)
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+
+  @@index([quotationId])
+  @@map("quotation_items")
+}
+
+/// Catalog: Types of label products
+model LabelType {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String?  @map("organization_id") @db.Uuid
+  name           String
+  slug           String
+  description    String?
+  isActive       Boolean  @default(true) @map("is_active")
+  sortOrder      Int      @default(0) @map("sort_order")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization?        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requirements ProjectRequirement[]
+
+  @@unique([organizationId, slug])
+  @@map("label_types")
+}
+
+/// Catalog: Material types (Paper, Vinyl, PE, metallic foil, etc.)
+model Material {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String?  @map("organization_id") @db.Uuid
+  name           String
+  slug           String
+  propertiesJson Json?    @map("properties_json")
+  isActive       Boolean  @default(true) @map("is_active")
+  sortOrder      Int      @default(0) @map("sort_order")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization?        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requirements ProjectRequirement[]
+
+  @@unique([organizationId, slug])
+  @@map("materials")
+}
+
+/// System-wide audit log for key mutations
+model ActivityLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  actorUserId    String?  @map("actor_user_id") @db.Uuid
+  entityType     String   @map("entity_type")
+  entityId       String   @map("entity_id")
+  action         String
+  metadata       Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actorUser    Profile?     @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, entityType, entityId])
+  @@index([organizationId, createdAt])
+  @@map("activity_logs")
+}
+
+/// History and tracking for AI features
+model AIRun {
+  id             String      @id @default(uuid()) @db.Uuid
+  organizationId String      @map("organization_id") @db.Uuid
+  projectId      String?     @map("project_id") @db.Uuid
+  userId         String?     @map("user_id") @db.Uuid
+  type           AIRunType
+  status         AIRunStatus @default(PENDING)
+  inputJson      Json?       @map("input_json")
+  outputJson     Json?       @map("output_json")
+  model          String?
+  promptVersion  String?     @map("prompt_version")
+  tokensUsed     Int?        @map("tokens_used")
+  costUsd        Decimal?    @map("cost_usd") @db.Decimal(8, 4)
+  latencyMs      Int?        @map("latency_ms")
+  userFeedback   Json?       @map("user_feedback")
+  createdAt      DateTime    @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  user         Profile?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, type])
+  @@map("ai_runs")
+}

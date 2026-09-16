@@ -1,0 +1,318 @@
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { Request, Response } from 'express';
+import { PrismaService } from '../../database/prisma.service';
+import { SupabaseService } from '../../integrations/supabase/supabase.service';
+import { AuthContext } from '../../common/interfaces/auth-context.interface';
+import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
+
+@Injectable()
+export class AuthService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly supabaseService: SupabaseService,
+  ) {}
+
+  /**
+   * Helper to set HTTP-only cookies for JWT Access Token & Refresh Token
+   */
+  private setAuthCookies(
+    res: Response,
+    accessToken: string,
+    refreshToken: string,
+    expiresIn: number = 604800,
+  ) {
+    const isProd = process.env.NODE_ENV === 'production';
+
+    // Access Token Cookie (Short/Medium lived)
+    res.cookie('access_token', accessToken, {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax',
+      maxAge: expiresIn * 1000,
+      path: '/',
+    });
+
+    // Refresh Token Cookie (Long lived, e.g. 30 days)
+    res.cookie('refresh_token', refreshToken, {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+      path: '/',
+    });
+  }
+
+  /**
+   * Helper to clear auth cookies
+   */
+  private clearAuthCookies(res: Response) {
+    const isProd = process.env.NODE_ENV === 'production';
+    const cookieOpts = {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: (isProd ? 'none' : 'lax') as any,
+      path: '/',
+    };
+    res.clearCookie('access_token', cookieOpts);
+    res.clearCookie('refresh_token', cookieOpts);
+  }
+
+  async login(dto: LoginDto, res: Response) {
+    const supabase = this.supabaseService.getClient();
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: dto.email,
+      password: dto.password,
+    });
+
+    if (error || !data.session) {
+      throw new UnauthorizedException(
+        error?.message || 'Email hoặc mật khẩu không chính xác',
+      );
+    }
+
+    const { user, session } = data;
+
+    // Set HTTP-only Cookies
+    this.setAuthCookies(
+      res,
+      session.access_token,
+      session.refresh_token,
+      session.expires_in || 604800,
+    );
+
+    // Fetch or create profile in Prisma
+    let profile = await this.prisma.profile.findUnique({
+      where: { id: user.id },
+      include: {
+        organizationMembers: {
+          take: 1,
+          include: { organization: true },
+        },
+      },
+    });
+
+    if (!profile) {
+      const rootOrg = await this.prisma.organization.findFirst({
+        where: { slug: 'zuntie' },
+      });
+
+      profile = await this.prisma.profile.create({
+        data: {
+          id: user.id,
+          email: user.email || dto.email,
+          fullName: user.user_metadata?.full_name || dto.email,
+          userType: 'STAFF',
+          ...(rootOrg && {
+            organizationMembers: {
+              create: {
+                organizationId: rootOrg.id,
+                role: 'ADMIN',
+              },
+            },
+          }),
+        },
+        include: {
+          organizationMembers: {
+            take: 1,
+            include: { organization: true },
+          },
+        },
+      });
+    }
+
+    return {
+      message: 'Đăng nhập thành công',
+      data: {
+        user: {
+          id: profile.id,
+          fullName: profile.fullName,
+          email: profile.email,
+          userType: profile.userType,
+          organizationId: profile.organizationMembers[0]?.organizationId || null,
+          staffRole: profile.organizationMembers[0]?.role || null,
+        },
+        accessToken: session.access_token,
+        refreshToken: session.refresh_token,
+      },
+    };
+  }
+
+  async register(dto: RegisterDto, res: Response) {
+    const supabase = this.supabaseService.getClient();
+
+    const existingProfile = await this.prisma.profile.findUnique({
+      where: { email: dto.email },
+    });
+
+    if (existingProfile) {
+      throw new BadRequestException('Email đã tồn tại trong hệ thống');
+    }
+
+    const { data, error } = await supabase.auth.signUp({
+      email: dto.email,
+      password: dto.password,
+      options: {
+        data: {
+          full_name: dto.fullName,
+        },
+      },
+    });
+
+    if (error || !data.user) {
+      throw new BadRequestException(
+        error?.message || 'Đăng ký tài khoản thất bại',
+      );
+    }
+
+    const user = data.user;
+    const session = data.session;
+
+    const rootOrg = await this.prisma.organization.findFirst({
+      where: { slug: 'zuntie' },
+    });
+
+    const profile = await this.prisma.profile.create({
+      data: {
+        id: user.id,
+        email: dto.email,
+        fullName: dto.fullName,
+        phone: dto.phone,
+        userType: 'STAFF',
+        ...(rootOrg && {
+          organizationMembers: {
+            create: {
+              organizationId: rootOrg.id,
+              role: 'SALES',
+            },
+          },
+        }),
+      },
+      include: {
+        organizationMembers: {
+          take: 1,
+          include: { organization: true },
+        },
+      },
+    });
+
+    if (session) {
+      this.setAuthCookies(
+        res,
+        session.access_token,
+        session.refresh_token,
+        session.expires_in || 604800,
+      );
+    }
+
+    return {
+      message: 'Đăng ký tài khoản thành công',
+      data: {
+        user: {
+          id: profile.id,
+          fullName: profile.fullName,
+          email: profile.email,
+          userType: profile.userType,
+          organizationId: profile.organizationMembers[0]?.organizationId || null,
+          staffRole: profile.organizationMembers[0]?.role || null,
+        },
+        accessToken: session?.access_token || null,
+        refreshToken: session?.refresh_token || null,
+      },
+    };
+  }
+
+  async refreshToken(req: Request, res: Response) {
+    const supabase = this.supabaseService.getClient();
+
+    let refreshToken = req.cookies?.['refresh_token'];
+    if (!refreshToken && req.body?.refreshToken) {
+      refreshToken = req.body.refreshToken;
+    }
+
+    if (!refreshToken) {
+      throw new UnauthorizedException('Refresh token không tồn tại');
+    }
+
+    const { data, error } = await supabase.auth.refreshSession({
+      refresh_token: refreshToken,
+    });
+
+    if (error || !data.session) {
+      this.clearAuthCookies(res);
+      throw new UnauthorizedException(
+        error?.message || 'Refresh token không hợp lệ hoặc đã hết hạn',
+      );
+    }
+
+    const { session } = data;
+    this.setAuthCookies(
+      res,
+      session.access_token,
+      session.refresh_token,
+      session.expires_in || 604800,
+    );
+
+    return {
+      message: 'Gia hạn phiên đăng nhập thành công',
+      data: {
+        accessToken: session.access_token,
+        refreshToken: session.refresh_token,
+      },
+    };
+  }
+
+  async logout(res: Response) {
+    this.clearAuthCookies(res);
+    return {
+      message: 'Đăng xuất thành công',
+    };
+  }
+
+  async getMe(authContext: AuthContext) {
+    const profile = await this.prisma.profile.findUnique({
+      where: { id: authContext.userId },
+      include: {
+        organizationMembers: {
+          include: {
+            organization: {
+              select: { id: true, name: true, slug: true, status: true },
+            },
+          },
+        },
+        customerUsers: {
+          include: {
+            customer: {
+              select: { id: true, name: true, companyName: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!profile) {
+      throw new NotFoundException('Profile không tồn tại trong hệ thống');
+    }
+
+    return {
+      profile: {
+        id: profile.id,
+        fullName: profile.fullName,
+        email: profile.email,
+        avatarUrl: profile.avatarUrl,
+        phone: profile.phone,
+        userType: profile.userType,
+        createdAt: profile.createdAt,
+      },
+      authContext,
+      memberships: profile.organizationMembers,
+      customerAccess: profile.customerUsers,
+    };
+  }
+}
