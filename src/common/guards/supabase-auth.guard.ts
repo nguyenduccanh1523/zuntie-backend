@@ -46,9 +46,7 @@ export class SupabaseAuthGuard implements CanActivate {
     }
 
     if (!token) {
-      throw new UnauthorizedException(
-        'Missing authentication token in HTTP-only Cookie or Authorization Header',
-      );
+      throw new UnauthorizedException('Bạn chưa đăng nhập hoặc phiên đăng nhập đã hết hạn');
     }
 
     try {
@@ -71,6 +69,9 @@ export class SupabaseAuthGuard implements CanActivate {
 
       // Fallback: If profile doesn't exist yet, auto-provision
       if (!profile) {
+        const metadata = user.user_metadata || {};
+        const fullName = typeof metadata.full_name === 'string' ? metadata.full_name : user.email || 'Người dùng';
+        const avatarUrl = typeof metadata.avatar_url === 'string' ? metadata.avatar_url : undefined;
         const rootOrg = await this.prisma.organization.findFirst({
           where: { slug: 'zuntie' },
         });
@@ -79,8 +80,8 @@ export class SupabaseAuthGuard implements CanActivate {
           data: {
             id: user.id,
             email: user.email || '',
-            fullName: user.user_metadata?.full_name || user.email || 'User',
-            avatarUrl: user.user_metadata?.avatar_url,
+            fullName,
+            avatarUrl,
             userType: 'STAFF',
             ...(rootOrg && {
               organizationMembers: {
@@ -123,11 +124,9 @@ export class SupabaseAuthGuard implements CanActivate {
 
       (request as any).user = authContext;
       return true;
-    } catch (err) {
+    } catch {
       throw new UnauthorizedException(
-        err instanceof Error
-          ? err.message
-          : 'Invalid token signature or expired session',
+        'Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại.',
       );
     }
   }

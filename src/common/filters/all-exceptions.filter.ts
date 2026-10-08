@@ -51,10 +51,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
       message = exception.message;
     }
 
-    this.logger.error(
-      `${request.method} ${request.url} - Status: ${status} - ErrorCode: ${errorCode} - Message: ${JSON.stringify(message)}`,
-      exception instanceof Error ? exception.stack : undefined,
-    );
+    const logMessage = `${request.method} ${request.url} - Status: ${status} - ErrorCode: ${errorCode} - Message: ${JSON.stringify(message)}`;
+    if (status === HttpStatus.UNAUTHORIZED) {
+      // /auth/me is intentionally called on first page load before a visitor has a session.
+      this.logger.warn(logMessage);
+    } else {
+      this.logger.error(logMessage, exception instanceof Error ? exception.stack : undefined);
+    }
 
     response.status(status).json({
       statusCode: status,

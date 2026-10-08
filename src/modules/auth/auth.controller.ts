@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Query, Req, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -6,6 +6,7 @@ import { AuthContext } from '../../common/interfaces/auth-context.interface';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { SkipTenant } from '../../common/decorators/skip-tenant.decorator';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -53,6 +54,7 @@ export class AuthController {
   }
 
   @Get('me')
+  @SkipTenant()
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Lấy thông tin Profile & Permissions của User đang đăng nhập' })
   async getMe(@CurrentUser() user: AuthContext) {
@@ -61,5 +63,19 @@ export class AuthController {
       message: 'Lấy thông tin tài khoản thành công',
       data,
     };
+  }
+
+  @Public()
+  @Get('google')
+  async googleLogin(@Res() res: any, @Query('returnUrl') returnUrl?: string) {
+    const url = await this.authService.getGoogleLoginUrl(returnUrl);
+    return res.redirect(url);
+  }
+
+  @Public()
+  @Get('google/callback')
+  async googleCallback(@Res() res: any, @Query('code') code?: string, @Query('returnUrl') returnUrl?: string) {
+    const destination = await this.authService.completeGoogleLogin(code, returnUrl, res);
+    return res.redirect(destination);
   }
 }

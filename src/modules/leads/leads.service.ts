@@ -264,6 +264,10 @@ export class LeadsService {
       throw new BadRequestException('Lead này đã được Convert trước đó');
     }
 
+    const existingProfile = lead.email
+      ? await this.prisma.profile.findUnique({ where: { email: lead.email } })
+      : null;
+
     return this.prisma.$transaction(async (tx) => {
       // 1. Create Customer
       const customer = await tx.customer.create({
@@ -282,6 +286,11 @@ export class LeadsService {
               isPrimary: true,
             },
           },
+          ...(existingProfile && {
+            portalUsers: {
+              create: { userId: existingProfile.id, role: 'OWNER', status: 'ACTIVE' },
+            },
+          }),
         },
       });
 

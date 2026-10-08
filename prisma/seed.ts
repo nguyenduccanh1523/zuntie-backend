@@ -40,11 +40,11 @@ async function main() {
 
   // 2. Seed Default Label Types
   const labelTypes = [
-    { name: 'Nhãn cuộn (Roll Labels)', slug: 'nhan-cuon', description: 'Nhãn in dạng cuộn phù hợp dán máy tự động' },
-    { name: 'Nhãn dán chai lọ (Bottle Labels)', slug: 'nhan-chai-lo', description: 'Nhãn chống nước dán trên chai thủy tinh, nhựa' },
-    { name: 'Nhãn niêm phong (Security Labels)', slug: 'nhan-niem-phong', description: 'Nhãn vỡ, nhãn void chống hàng giả, niêm phong hộp' },
-    { name: 'Nhãn màng co (Shrink Sleeve)', slug: 'nhan-mang-co', description: 'Màng co ôm sát thân chai 360 độ' },
-    { name: 'Nhãn nhiệt (Thermal Labels)', slug: 'nhan-nhiet', description: 'Nhãn in nhiệt trực tiếp dùng cho mã vạch & vận chuyển' },
+    { name: 'Nhãn dệt', slug: 'woven-labels', description: 'Nhãn dệt mềm, bền màu cho thời trang và sản phẩm may mặc.' },
+    { name: 'Nhãn in vải', slug: 'printed-fabric-labels', description: 'Nhãn in trên satin, cotton hoặc taffeta với chữ nhỏ sắc nét.' },
+    { name: 'Nhãn hướng dẫn giặt', slug: 'care-labels', description: 'Nhãn thông tin thành phần và hướng dẫn bảo quản sản phẩm.' },
+    { name: 'Thẻ treo', slug: 'hang-tags', description: 'Thẻ treo giấy mỹ thuật, phù hợp logo và thông tin thương hiệu.' },
+    { name: 'Nhãn dán', slug: 'stickers', description: 'Nhãn dán đóng gói, nhận diện và hoàn thiện sản phẩm.' },
   ];
 
   for (let i = 0; i < labelTypes.length; i++) {

@@ -7,6 +7,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { AuthContext } from '../interfaces/auth-context.interface';
+import { SKIP_TENANT_KEY } from '../decorators/skip-tenant.decorator';
 
 @Injectable()
 export class TenantGuard implements CanActivate {
@@ -21,6 +22,11 @@ export class TenantGuard implements CanActivate {
     if (isPublic) {
       return true;
     }
+
+    const skipTenant = this.reflector.getAllAndOverride<boolean>(SKIP_TENANT_KEY, [
+      context.getHandler(), context.getClass(),
+    ]);
+    if (skipTenant) return true;
 
     const request = context.switchToHttp().getRequest();
     const user: AuthContext = request.user;

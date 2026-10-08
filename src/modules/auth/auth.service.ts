@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
@@ -66,15 +67,20 @@ export class AuthService {
   async login(dto: LoginDto, res: Response) {
     const supabase = this.supabaseService.getClient();
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: dto.email,
-      password: dto.password,
-    });
+    let result;
+    try {
+      result = await supabase.auth.signInWithPassword({
+        email: dto.email,
+        password: dto.password,
+      });
+    } catch {
+      this.throwSupabaseUnavailable();
+    }
+    const { data, error } = result!;
 
+    if (error && this.isSupabaseConnectionError(error)) this.throwSupabaseUnavailable();
     if (error || !data.session) {
-      throw new UnauthorizedException(
-        error?.message || 'Email hoặc mật khẩu không chính xác',
-      );
+      throw new UnauthorizedException('Email hoặc mật khẩu không chính xác');
     }
 
     const { user, session } = data;
@@ -142,6 +148,73 @@ export class AuthService {
         refreshToken: session.refresh_token,
       },
     };
+  }
+
+  async getGoogleLoginUrl(returnUrl?: string) {
+    const callback = process.env.GOOGLE_OAUTH_REDIRECT_URL || `${process.env.APP_BASE_URL || 'http://localhost:1911'}/api/v1/auth/google/callback`;
+    const safeReturnUrl = this.getSafeReturnUrl(returnUrl);
+    const redirectTo = `${callback}?returnUrl=${encodeURIComponent(safeReturnUrl)}`;
+    let result;
+    try {
+      result = await this.supabaseService.getClient().auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo },
+      });
+    } catch {
+      this.throwSupabaseUnavailable();
+    }
+    const { data, error } = result!;
+    if (error && this.isSupabaseConnectionError(error)) this.throwSupabaseUnavailable();
+    if (error || !data.url) throw new BadRequestException('Không thể khởi tạo đăng nhập Google. Vui lòng kiểm tra cấu hình Google trong Supabase.');
+    return data.url;
+  }
+
+  async completeGoogleLogin(code: string | undefined, returnUrl: string | undefined, res: Response) {
+    if (!code) throw new BadRequestException('Thiếu mã xác thực Google');
+    const { data, error } = await this.supabaseService.getClient().auth.exchangeCodeForSession(code);
+    if (error || !data.session || !data.user) throw new UnauthorizedException('Không thể xác thực tài khoản Google. Vui lòng thử lại.');
+    await this.ensureCustomerProfile(data.user.id, data.user.email || '', data.user.user_metadata?.full_name);
+    this.setAuthCookies(res, data.session.access_token, data.session.refresh_token, data.session.expires_in || 604800);
+    return this.getSafeReturnUrl(returnUrl);
+  }
+
+  private throwSupabaseUnavailable(): never {
+    throw new ServiceUnavailableException({
+      errorCode: 'SUPABASE_AUTH_UNREACHABLE',
+      message: 'Không thể kết nối Supabase Auth. Hãy kiểm tra SUPABASE_URL trong .env, trạng thái dự án Supabase và kết nối DNS/mạng.',
+    });
+  }
+
+  private isSupabaseConnectionError(error: { message?: string; status?: number }) {
+    return error.status === 0 || error.message?.toLowerCase().includes('fetch failed');
+  }
+
+  private getSafeReturnUrl(returnUrl?: string) {
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    if (!returnUrl) return `${frontendUrl}/portal`;
+    try {
+      const parsed = new URL(returnUrl);
+      return parsed.origin === frontendUrl ? returnUrl : `${frontendUrl}/portal`;
+    } catch {
+      return `${frontendUrl}/portal`;
+    }
+  }
+
+  private async ensureCustomerProfile(userId: string, email: string, fullName?: string) {
+    const profile = await this.prisma.profile.upsert({
+      where: { id: userId },
+      update: { email, fullName: fullName || email, userType: 'CUSTOMER' },
+      create: { id: userId, email, fullName: fullName || email, userType: 'CUSTOMER' },
+    });
+    const customer = await this.prisma.customer.findFirst({ where: { email } });
+    if (customer) {
+      await this.prisma.customerUser.upsert({
+        where: { customerId_userId: { customerId: customer.id, userId: profile.id } },
+        update: { status: 'ACTIVE' },
+        create: { customerId: customer.id, userId: profile.id, role: 'OWNER', status: 'ACTIVE' },
+      });
+    }
+    return profile;
   }
 
   async register(dto: RegisterDto, res: Response) {

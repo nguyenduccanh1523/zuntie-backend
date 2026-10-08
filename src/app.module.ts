@@ -20,6 +20,10 @@ import { OrganizationsModule } from './modules/organizations/organizations.modul
 import { UsersModule } from './modules/users/users.module';
 import { ActivityModule } from './modules/activity/activity.module';
 import { LeadsModule } from './modules/leads/leads.module';
+import { CustomersModule } from './modules/customers/customers.module';
+import { ProjectsModule } from './modules/projects/projects.module';
+import { CloudinaryModule } from './integrations/cloudinary/cloudinary.module';
+import { EmailModule } from './integrations/email/email.module';
 
 @Module({
   imports: [
@@ -33,6 +37,10 @@ import { LeadsModule } from './modules/leads/leads.module';
     OrganizationsModule,
     UsersModule,
     LeadsModule,
+    CustomersModule,
+    ProjectsModule,
+    CloudinaryModule,
+    EmailModule,
   ],
   providers: [
     {

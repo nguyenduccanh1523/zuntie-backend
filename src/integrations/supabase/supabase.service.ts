@@ -2,6 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
+export interface VerifiedTokenUser {
+  id: string;
+  email: string;
+  user_metadata?: Record<string, unknown>;
+}
+
 @Injectable()
 export class SupabaseService {
   private readonly logger = new Logger(SupabaseService.name);
@@ -29,14 +35,22 @@ export class SupabaseService {
     return this.client;
   }
 
-  async verifyToken(token: string) {
+  async verifyToken(token: string): Promise<VerifiedTokenUser> {
     if (!this.client) {
       throw new Error('Supabase client is not initialized');
     }
-    const { data, error } = await this.client.auth.getUser(token);
-    if (error || !data.user) {
-      throw error || new Error('Invalid Supabase Auth token');
+
+    // getClaims xác thực chữ ký JWT an toàn. Với dự án dùng khóa bất đối xứng,
+    // Supabase chỉ tải JWKS một lần rồi dùng cache cục bộ thay vì gọi Auth cho mọi API.
+    const { data, error } = await this.client.auth.getClaims(token);
+    const claims = data?.claims;
+    if (error || !claims?.sub) {
+      throw error || new Error('Phiên đăng nhập không hợp lệ');
     }
-    return data.user;
+    return {
+      id: claims.sub,
+      email: claims.email || '',
+      user_metadata: (claims.user_metadata || {}) as Record<string, unknown>,
+    };
   }
 }

@@ -211,6 +211,7 @@ model Lead {
 
   @@index([organizationId, status, createdAt])
   @@index([organizationId, assignedUserId, status])
+  @@index([organizationId, createdAt])
   @@map("leads")
 }
 
@@ -314,6 +315,7 @@ model Project {
 
   @@index([organizationId, customerId, createdAt])
   @@index([organizationId, status, updatedAt])
+  @@index([organizationId, createdAt])
   @@map("projects")
 }
 
